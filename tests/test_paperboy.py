@@ -87,6 +87,15 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.get("/list/instapaper", auth=False)[0], 401)
         self.assertEqual(self.get("/lists?token=wrong", auth=False)[0], 401)
 
+    def test_sync_all_stays_under_firmware_file_cap(self):
+        # The firmware rejects a whole feed whose row has > 64 files.
+        self.lib.sources = {"instapaper": FakeSource("instapaper", [make_item(i, f"Article {i}") for i in range(40)])}
+        for i in self.lib.catalog():
+            self.lib.epub_path(i["id"])
+        row = json.loads(self.get("/list/instapaper?page=1&limit=8")[1])["items"][0]
+        self.assertEqual(row["title"], "Sync all (next 32 of 40 articles)")
+        self.assertEqual(len(row["files"]), 64)
+
     def test_one_combined_list(self):
         st, b = self.get(f"/lists?token={TOKEN}", auth=False)
         lists = json.loads(b)["lists"]

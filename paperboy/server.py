@@ -57,6 +57,9 @@ SIDECAR_KEY = "paperboy_id"
 # Last file of every Sync all bundle: fetching it means the reader got the rest,
 # which matters most when a sync only removes finished articles.
 SYNC_MARKER = ".paperboy-sync.json"
+# Firmware's list parser rejects the whole feed if one row's "files" has more
+# than 64 entries ("Failed to parse feed"), so Sync all sends at most this many.
+MAX_BUNDLE_FILES = 64
 LEGACY_SIDECAR_KEYS = ("instapaper_id",)
 LIST_TITLES = {"instapaper": "Instapaper", "feedbin": "Feedbin starred"}
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
@@ -529,6 +532,12 @@ class Handler(BaseHTTPRequestHandler):
             count = f"{n} new" if len(todo) < len(everything) else f"{n} articles"
             if n < len(todo):
                 count = f"{n} of {len(todo)} new ready"
+            # Two files per article, plus the marker when removing; the rest go
+            # in the next Sync all, since these will then be on the card.
+            room = (MAX_BUNDLE_FILES - (1 if gone else 0)) // 2
+            if n > room:
+                count = f"next {room} of {count}"
+                ready = ready[:room]
             if gone:
                 done_s = f"{len(gone)} finished to remove"
                 count = f"{count}, {done_s}" if todo else done_s
