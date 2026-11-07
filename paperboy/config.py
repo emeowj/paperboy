@@ -12,6 +12,8 @@
   "reader_sync": true,                     tidy the reader when it's in File Transfer mode
   "library_author": "",                    if set (e.g. "Paperboy"), every article's EPUB author,
                                            so the Library's Author tab groups them apart from books
+  "sync_removes": false,                   Sync all also deletes finished articles from the
+                                           reader. Needs firmware with catalog.bundle_remove
   "broadcast": ["255.255.255.255"],        where to look for the reader
   "token": "..."                           added on first start
 }
@@ -33,6 +35,7 @@ DEFAULTS = {
     "broadcast": ["255.255.255.255"],
     "public_url": "",
     "library_author": "",
+    "sync_removes": False,
 }
 
 

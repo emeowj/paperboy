@@ -54,6 +54,9 @@ EPUB_VERSION = "v4"    # bump when the EPUB design changes; old cache entries go
 _epub_tag = EPUB_VERSION  # EPUB_VERSION plus anything in config that changes the built file
 SYNC_ID = "sync-all"
 SIDECAR_KEY = "paperboy_id"
+# Last file of every Sync all bundle: fetching it means the reader got the rest,
+# which matters most when a sync only removes finished articles.
+SYNC_MARKER = ".paperboy-sync.json"
 LEGACY_SIDECAR_KEYS = ("instapaper_id",)
 LIST_TITLES = {"instapaper": "Instapaper", "feedbin": "Feedbin starred"}
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
@@ -93,11 +96,12 @@ class Library:
         os.makedirs(self.cache_dir, exist_ok=True)
         self.finished_path = config.data_path("finished.json")
         self.on_card_path = config.data_path("on_card.json")
+        self.names_path = config.data_path("card_names.json")
         self._lock = threading.Lock()
         self._lists = {}  # source -> (fetched_at, items)
         self._card_lock = threading.Lock()
-        self._offered = {}  # first file of a row's bundle -> (files, ids)
-        self._runs = []     # bundle downloads in progress: [files, next index, ids]
+        self._offered = {}  # first file of a row's bundle -> (files, ids, removed ids)
+        self._runs = []     # bundle downloads in progress: [files, next index, ids, removed ids]
         self._building = set()  # ids being built now, so no two threads build one
 
     # --- lists ---
@@ -139,7 +143,30 @@ class Library:
                 name = f"{name}-{i['id']}"
             seen.add(name.lower())
             i["name"] = name
+        self._remember_names(items)
         return items
+
+    def _remember_names(self, items):
+        """Keep each article's on-card name after it leaves the list, so a Sync
+        can tell the reader which files to remove."""
+        with self._card_lock:
+            names = self.card_names()
+            new = dict(names, **{i["id"]: i["name"] for i in items})
+            on_card = self.on_card()
+            new = {k: v for k, v in new.items() if k in on_card or k in {i["id"] for i in items}}
+            if new == names:
+                return
+            tmp = self.names_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(new, f, sort_keys=True)
+            os.replace(tmp, self.names_path)
+
+    def card_names(self):
+        try:
+            with open(self.names_path) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
 
     # --- EPUBs ---
 
@@ -230,10 +257,10 @@ class Library:
         except (OSError, ValueError):
             return set()
 
-    def mark_on_card(self, ids, replace=False):
+    def mark_on_card(self, ids, replace=False, removed=()):
         with self._card_lock:
             have = self.on_card()
-            new = set(ids) if replace else have | set(ids)
+            new = (set(ids) if replace else have | set(ids)) - set(removed)
             if new == have:
                 return
             tmp = self.on_card_path + ".tmp"
@@ -241,12 +268,12 @@ class Library:
                 json.dump(sorted(new), f)
             os.replace(tmp, self.on_card_path)
 
-    def offer(self, files, ids):
+    def offer(self, files, ids, removed=()):
         """Remember a row's bundle, so served() can tell when it has all arrived."""
         with self._card_lock:
             if len(self._offered) > 2000:
                 self._offered.clear()
-            self._offered[files[0]] = (files, ids)
+            self._offered[files[0]] = (files, ids, list(removed))
 
     def served(self, fname):
         """Count a bundle file as delivered. The reader keeps a bundle only once
@@ -259,14 +286,18 @@ class Library:
             # follow every bundle it could belong to.
             runs = [r for r in self._runs if r[0][r[1]] == fname]
             if fname in self._offered:
-                files, ids = self._offered[fname]
-                runs.append([files, 0, ids])
+                files, ids, removed = self._offered[fname]
+                runs.append([files, 0, ids, removed])
             for r in runs:
                 r[1] += 1
             done = [i for r in runs if r[1] == len(r[0]) for i in r[2]]
+            gone = [i for r in runs if r[1] == len(r[0]) for i in r[3]]
             self._runs = [r for r in runs if r[1] < len(r[0])]
-        if done:
-            self.mark_on_card(done)
+        if done or gone:
+            # Firmware with bundle removals (catalog.bundle_remove) has deleted
+            # `gone` by now. Older firmware hasn't, but the next home tidy-up
+            # replaces the set with what it finds, so nothing is lost.
+            self.mark_on_card(done, removed=gone)
 
     # --- the web page ---
 
@@ -414,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
                 # the first thing on screen. /list/<source> still works.
                 return self._send(200, {"lists": [
                     {"title": "Reading list", "url": "{cfg.server}/list/" + ALL + "?page={page}&limit={limit}"}]})
-            m = re.fullmatch(r"/f/([^/]+)/([A-Za-z0-9-]+\.epub(?:\.meta\.json)?)", path)
+            m = re.fullmatch(r"/f/([^/]+)/([A-Za-z0-9-]+\.epub(?:\.meta\.json)?|\.paperboy-sync\.json)", path)
             if m:
                 return self._file(m.group(1), m.group(2))
             if not self._authed():
@@ -486,6 +517,11 @@ class Handler(BaseHTTPRequestHandler):
         else:
             on_card = self.lib.on_card()
             todo = [i for i in everything if i["id"] not in on_card]
+            # On the card but off the list: finished here or archived elsewhere.
+            names = self.lib.card_names()
+            listed = {i["id"] for i in everything}
+            gone = sorted(i for i in on_card - listed if i in names) if self.lib.cfg.get("sync_removes") else []
+            remove = [f for i in gone for f in files_for({"name": names[i]})]
             ready = [i for i in todo if self.lib.cached(i["id"])]
             if len(ready) < len(todo):
                 self.lib.build_soon([i["id"] for i in todo if not self.lib.cached(i["id"])])
@@ -493,22 +529,27 @@ class Handler(BaseHTTPRequestHandler):
             count = f"{n} new" if len(todo) < len(everything) else f"{n} articles"
             if n < len(todo):
                 count = f"{n} of {len(todo)} new ready"
+            if gone:
+                done_s = f"{len(gone)} finished to remove"
+                count = f"{count}, {done_s}" if todo else done_s
             sync_row = {
                 "id": SYNC_ID, "base": base,
                 "title": f"Sync all ({count})",
                 "subtitle": " + ".join(LIST_TITLES[s] for s in self.lib.sources),
-                "description": "Downloads the articles that aren't on your reader yet into /Paperboy. "
-                               "Afterwards, open the Library and use Refresh library.",
+                "description": "Downloads the articles that aren't on your reader yet into /Paperboy, "
+                               "and removes the ones you've finished. Afterwards, open the Library "
+                               "and use Refresh library if they don't show.",
                 # Sidecar before EPUB, the reverse of a single row's order, so
                 # the first file served tells served() which bundle started.
-                "files": [f for i in ready for f in reversed(files_for(i))],
-            } if ready else None
+                "files": [f for i in ready for f in reversed(files_for(i))] + ([SYNC_MARKER] if gone else []),
+                "remove": remove,
+            } if ready or gone else None
         rows = [dict(i, base=base, files=files_for(i)) for i in everything
                 if source == ALL or self.lib.source_of(i["id"]) == source]
         for r in rows:
             self.lib.offer(r["files"], [r["id"]])
         if sync_row:
-            self.lib.offer(sync_row["files"], [i["id"] for i in ready])
+            self.lib.offer(sync_row["files"], [i["id"] for i in ready], gone)
             rows.insert(0, sync_row)
         start = (page - 1) * size
         self._send(200, {"total": len(rows), "items": rows[start:start + limit]})
@@ -516,6 +557,9 @@ class Handler(BaseHTTPRequestHandler):
     def _file(self, token, fname):
         if not self._token_ok(token):
             return self._send(401, {"error": "unauthorized"})
+        if fname == SYNC_MARKER:
+            self._send(200, json.dumps({"synced": time.strftime("%Y-%m-%d %H:%M:%S")}).encode())
+            return self.lib.served(fname)
         by_name = {f: i for i in self.lib.catalog() for f in files_for(i)}
         item = by_name.get(fname)
         if not item:
@@ -554,12 +598,20 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             log(f"progress {item_id}: ignored, no percent ({pct_s!r})")
             return self._send(200, {"ok": True, "ignored": "no percent"})
+        # CrossPoint 2.0.0+ sends end_percent (bottom of the page): 100 = last page.
+        # Older firmware sends the template literally, which fails to parse.
+        try:
+            end_pct = float(str(body.get("end_percent", "")).strip().rstrip("%"))
+        except ValueError:
+            end_pct = None
         need = float(self.lib.cfg["archive_at"])
         end = self.lib.finish_at(item_id)
         if end is not None:
             need = min(need, end)   # reaching the end page counts, however short the piece
+        if end_pct is not None and end_pct >= 100:
+            pct = max(pct, 100.0)
         if pct < need:
-            log(f"progress {item_id}: {pct:g}% (finished at {need:g}%), not finished")
+            log(f"progress {item_id}: {pct:g}% (end {body.get('end_percent', '-')!s:.12}; finished at {need:g}%), not finished")
             return self._send(200, {"ok": True, "finished": False, "percent": pct})
         self.lib.finish(item_id, f"read {pct:g}% event={body.get('event_id', '')}")
         self._send(200, {"ok": True, "finished": True})

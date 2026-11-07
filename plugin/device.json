@@ -28,11 +28,13 @@
     "bundle": {
       "base": "base",
       "files": "files",
-      "subdir": "Paperboy"
+      "subdir": "Paperboy",
+      "remove": "remove"
     }
   },
   "events": {
     "reader.exit": {
+      "require_meta": "paperboy_id",
       "connect": true,
       "request": {
         "method": "POST",
@@ -41,10 +43,11 @@
           "Authorization": "Bearer {cfg.token}",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{meta.paperboy_id}\",\"legacy_id\":\"{meta.instapaper_id}\",\"percent\":\"{event.percent}\",\"event_id\":\"{event.id}\"}"
+        "body": "{\"id\":\"{meta.paperboy_id}\",\"percent\":\"{event.percent}\",\"end_percent\":\"{event.end_percent}\",\"event_id\":\"{event.id}\"}"
       }
     },
     "sleep.enter": {
+      "require_meta": "paperboy_id",
       "request": {
         "method": "POST",
         "url": "{cfg.server}/progress",
@@ -52,7 +55,7 @@
           "Authorization": "Bearer {cfg.token}",
           "Content-Type": "application/json"
         },
-        "body": "{\"id\":\"{meta.paperboy_id}\",\"legacy_id\":\"{meta.instapaper_id}\",\"percent\":\"{event.percent}\",\"event_id\":\"{event.id}\"}"
+        "body": "{\"id\":\"{meta.paperboy_id}\",\"percent\":\"{event.percent}\",\"end_percent\":\"{event.end_percent}\",\"event_id\":\"{event.id}\"}"
       }
     }
   }

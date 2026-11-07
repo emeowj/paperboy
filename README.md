@@ -36,7 +36,8 @@ On first start a `token` is added to `data/config.json`. Then on the reader: ope
 | `instapaper` | | `access_token`: a personal access token (Instapaper API v2). Configs from before 1.1 with `consumer_key`, `consumer_secret`, `username` and `password` still work until Instapaper turns xAuth off on 2027-09-30 |
 | `feedbin` | | `email`, `password` |
 | `public_url` | | The address the reader uses, e.g. `https://example.com/paperboy`. Needed for Sync all. |
-| `archive_at` | `95` | Percent read that counts as finished. Reaching an article's end page always counts, however short it is |
+| `archive_at` | `95` | Percent read that counts as finished. Reaching an article's last page always counts, however short it is |
+| `sync_removes` | `false` | Sync all also deletes finished articles from the reader. Needs CrossPoint firmware that supports bundle removals (`catalog.bundle_remove`, not released yet) |
 | `port` | `17300` | |
 | `bind` | `0.0.0.0` | |
 | `reader_sync` | `true` | Tidy the reader while it's in File Transfer mode |
@@ -63,7 +64,7 @@ Open the server's address in a browser (for example `http://localhost:17300/`) a
 | `GET /list/<source>?page=&limit=` | Bearer | Articles (`all`, `instapaper` or `feedbin`), paged; page 1 starts with Sync all |
 | `GET /f/<token>/<file>` | token in path | Bundle files: `<Name>.epub` and `<Name>.epub.meta.json` |
 | `GET /epub/<id>` | Bearer | One article's EPUB |
-| `POST /progress` | Bearer | `{"id", "percent", "event_id"}` from the reader |
+| `POST /progress` | Bearer | `{"id", "percent", "end_percent", "event_id"}` from the reader. `end_percent` (CrossPoint 2.0.0+) is 100 on the last page |
 
 The firmware can't send headers on bundle downloads or the list index, so those carry the token in the URL; the server's log redacts it.
 

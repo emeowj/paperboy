@@ -153,10 +153,30 @@ class ServerTest(unittest.TestCase):
         row = sync_row()
         self.assertEqual(row["title"], "Sync all (3 new)")
         self.assertEqual(len(row["files"]), 6)
+        self.assertEqual(row["remove"], [])
         for f in row["files"]:                         # a whole sync
             self.assertEqual(fetch(f), 200)
         self.assertEqual(self.lib.on_card(), {"101", "102", "fb201", "fb202"})
         self.assertNotEqual(sync_row()["id"], "sync-all")   # nothing new: no Sync all row
+
+        # Finished articles leave the list; the next Sync tells the reader to remove them.
+        ip = self.lib.sources["instapaper"]
+        kept = ip._items
+        ip._items = [i for i in kept if i["id"] != "101"]
+        self.lib.forget_lists()
+        self.assertNotEqual(sync_row()["id"], "sync-all")   # sync_removes off: stock firmware can't delete
+        self.lib.cfg["sync_removes"] = True
+        row = sync_row()
+        self.assertEqual(row["title"], "Sync all (1 finished to remove)")
+        self.assertEqual(row["files"], [".paperboy-sync.json"])
+        self.assertEqual(row["remove"], ["First-Article.epub", "First-Article.epub.meta.json"])
+        self.assertEqual(fetch(row["files"][0]), 200)
+        self.assertEqual(self.lib.on_card(), {"102", "fb201", "fb202"})
+        self.assertNotEqual(sync_row()["id"], "sync-all")
+        self.lib.cfg["sync_removes"] = False
+        ip._items = kept
+        self.lib.forget_lists()
+        self.lib.mark_on_card(["101", "102", "fb201", "fb202"])
 
         self.lib.mark_on_card(["101"], replace=True)   # a home tidy-up saw only one
         self.assertEqual(sync_row()["title"], "Sync all (3 new)")
@@ -217,8 +237,12 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(post({"id": "101", "percent": "50"})["finished"])
         self.assertTrue(post({"id": "{meta.paperboy_id}", "legacy_id": "101", "percent": "100"})["finished"])
         self.assertTrue(post({"id": "fb201", "percent": "97"})["finished"])
+        # CrossPoint 2.0.0 end_percent: the last page counts even when percent is low.
+        self.assertFalse(post({"id": "102", "percent": "60", "end_percent": "{event.end_percent}"})["finished"])
+        self.assertFalse(post({"id": "102", "percent": "60", "end_percent": "99"})["finished"])
+        self.assertTrue(post({"id": "102", "percent": "60", "end_percent": "100"})["finished"])
         post({"id": "101", "percent": "100"})               # replayed event: no second archive
-        self.assertEqual(ip.finished, ["101"])
+        self.assertEqual(ip.finished, ["101", "102"])
         self.assertEqual(fb.finished, ["fb201"])
 
 
