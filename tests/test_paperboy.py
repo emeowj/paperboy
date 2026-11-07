@@ -483,5 +483,45 @@ class EpubTest(unittest.TestCase):
         self.assertEqual(server.file_stem("???"), "Article")
 
 
+class ConfigEnvTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="paperboy-cfg-")
+        self._saved = (config.DATA_DIR, config.CONFIG_PATH)
+        config.DATA_DIR, config.CONFIG_PATH = self.dir, os.path.join(self.dir, "config.json")
+        self._env = {k: v for k, v in os.environ.items() if k.startswith("PAPERBOY_") and k != "PAPERBOY_DATA"}
+        for k in self._env:
+            del os.environ[k]
+
+    def tearDown(self):
+        config.DATA_DIR, config.CONFIG_PATH = self._saved
+        for k in [k for k in os.environ if k.startswith("PAPERBOY_") and k != "PAPERBOY_DATA"]:
+            del os.environ[k]
+        os.environ.update(self._env)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_env_only_needs_no_file_and_never_persists_secrets(self):
+        os.environ["PAPERBOY_INSTAPAPER_ACCESS_TOKEN"] = "secret-ip"
+        cfg = config.load()
+        self.assertEqual(cfg["instapaper"], {"access_token": "secret-ip"})
+        with open(config.CONFIG_PATH) as f:
+            written = json.load(f)
+        self.assertEqual(written, {"token": cfg["token"]})
+
+    def test_env_overrides_file_and_token_from_env_skips_write(self):
+        with open(config.CONFIG_PATH, "w") as f:
+            json.dump({"feedbin": {"email": "a@b", "password": "old"}}, f)
+        os.environ["PAPERBOY_FEEDBIN_PASSWORD"] = "new"
+        os.environ["PAPERBOY_TOKEN"] = "tok"
+        cfg = config.load()
+        self.assertEqual(cfg["feedbin"], {"email": "a@b", "password": "new"})
+        self.assertEqual(cfg["token"], "tok")
+        with open(config.CONFIG_PATH) as f:
+            self.assertNotIn("token", json.load(f))
+
+    def test_nothing_configured_errors(self):
+        with self.assertRaisesRegex(config.ConfigError, "environment variables"):
+            config.load()
+
+
 if __name__ == "__main__":
     unittest.main()

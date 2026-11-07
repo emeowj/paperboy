@@ -47,6 +47,32 @@ On first start a `token` is added to `data/config.json`. Then on the reader: ope
 
 At least one of `instapaper` and `feedbin` is required.
 
+### Environment variables
+
+Credentials and the token can be set with environment variables instead of (or on top of) `config.json`; they take precedence over the file, and are never written into it. If they supply the credentials, `config.json` is optional (a token is still generated into it on first start unless `PAPERBOY_TOKEN` is set).
+
+| Variable | Overrides |
+|---|---|
+| `PAPERBOY_INSTAPAPER_ACCESS_TOKEN` | `instapaper.access_token` |
+| `PAPERBOY_INSTAPAPER_CONSUMER_KEY`, `_CONSUMER_SECRET`, `_USERNAME`, `_PASSWORD` | the legacy xAuth `instapaper` keys |
+| `PAPERBOY_FEEDBIN_EMAIL`, `PAPERBOY_FEEDBIN_PASSWORD` | `feedbin.email`, `feedbin.password` |
+| `PAPERBOY_TOKEN` | `token` |
+| `PAPERBOY_PUBLIC_URL` | `public_url` |
+| `PAPERBOY_READER_SYNC` | `reader_sync` (`true` / `false`) |
+
+In `docker-compose.yml`, add them under `environment:` (or use an `env_file:`).
+
+### Dokploy
+
+`docker-compose.dokploy.yml` is set up for [Dokploy](https://dokploy.com):
+
+1. Create a **Compose** service, point it at this repo, and set the compose path to `./docker-compose.dokploy.yml`.
+2. Under **Environment**, set `PAPERBOY_INSTAPAPER_ACCESS_TOKEN` (and/or the Feedbin pair), `PAPERBOY_TOKEN` and `PAPERBOY_PUBLIC_URL`.
+3. Under **Domains**, add your domain for service `paperboy`, container port `17300`, with HTTPS on.
+4. Deploy.
+
+The reader downloads articles from `PAPERBOY_PUBLIC_URL`, so it works from anywhere. Home tidy-ups (`reader_sync`) need the server on the same network as the reader, so they're off by default here. If Dokploy runs on a machine at home, set `PAPERBOY_READER_SYNC=true` and switch the service to `network_mode: host` (see the comments in the file).
+
 ## Web page
 
 Open the server's address in a browser (for example `http://localhost:17300/`) and sign in with the token. You get the reading list, which articles are already on the reader, the last home tidy-up, an EPUB download for each article, and a **Finished** button that archives or unstars an article without reading it on the reader.

@@ -1,0 +1,31 @@
+# Paperboy on Dokploy (https://dokploy.com).
+# Set these in the service's Environment tab; Dokploy writes them to .env next to this file:
+#   PAPERBOY_INSTAPAPER_ACCESS_TOKEN   and/or PAPERBOY_FEEDBIN_EMAIL + PAPERBOY_FEEDBIN_PASSWORD
+#   PAPERBOY_TOKEN                     what the reader signs in with (e.g. `openssl rand -base64 18`)
+#   PAPERBOY_PUBLIC_URL                e.g. https://paperboy.example.com (your Dokploy domain)
+# Then add a Domain for service "paperboy", container port 17300.
+services:
+  paperboy:
+    build: .                           # Dokploy builds from the checked-out repo, so local changes apply
+    # image: ghcr.io/tommertron/paperboy:latest   # once a release with env-var support is published
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Home tidy-ups broadcast on the LAN to find the reader, which a cloud server can't do.
+      # On a home server: set this to true, add `network_mode: host`, and drop `networks:` below.
+      PAPERBOY_READER_SYNC: ${PAPERBOY_READER_SYNC:-false}
+    expose:
+      - "17300"
+    volumes:
+      - paperboy-data:/data            # cache, sync state, generated config.json
+    networks:
+      - dokploy-network
+
+volumes:
+  paperboy-data:
+
+networks:
+  dokploy-network:
+    external: true
